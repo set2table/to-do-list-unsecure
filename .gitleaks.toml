@@ -1,9 +1,24 @@
-# Config gitleaks du depot todolist : regles par defaut + faux positifs connus.
-# Chaque exception est justifiee ; on n'exclut jamais un fichier entier.
+# Config gitleaks du depot todolist : regles par defaut + regles propres au projet.
+# Les regles par defaut ne voient ni la SECRET_KEY Django ni le mot de passe admin
+# (pas de format connu, entropie trop faible) : on les ajoute explicitement.
 title = "gitleaks todolist"
 
 [extend]
 useDefault = true
+
+[[rules]]
+id = "django-secret-key"
+description = "Cle secrete Django ecrite en dur"
+regex = '''SECRET_KEY\s*=\s*['"]([^'"\s]{20,})['"]'''
+secretGroup = 1
+keywords = ["secret_key"]
+
+[[rules]]
+id = "mot-de-passe-en-dur"
+description = "Mot de passe ecrit en dur dans le code"
+regex = '''(?i)[a-z_]*(password|passwd|pwd)[a-z_]*\s*=\s*['"]([^'"\s]{8,})['"]'''
+secretGroup = 2
+keywords = ["password", "passwd", "pwd"]
 
 [allowlist]
 description = "Faux positifs connus"

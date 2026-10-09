@@ -13,6 +13,13 @@
       - todolist-deploy
       - todolist-ci
 
+  pre_tasks:
+    - name: Miroir debian rapide (aussi quand le durcissement est saute)
+      ansible.builtin.shell: |
+        grep -rl 'httpredir.debian.org' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
+          | xargs -r sed -i 's#httpredir.debian.org#deb.debian.org#g'
+      changed_when: false
+
   tasks:
     - name: Durcissement commun (J1)
       ansible.builtin.include_tasks: durcissement.yml
@@ -46,6 +53,7 @@
           - curl
           - unzip
         state: present
+        update_cache: true
 
     - name: Cle du depot Jenkins (cle 2026)
       ansible.builtin.get_url:
@@ -54,10 +62,10 @@
         mode: "0644"
 
     - name: Depot apt Jenkins LTS
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
-        filename: jenkins
-        state: present
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/jenkins.list
+        content: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/\n"
+        mode: "0644"
 
     - name: Installation de Jenkins
       ansible.builtin.apt:
@@ -238,14 +246,16 @@
       retries: 30
       delay: 5
 
-    - name: SonarQube repond (premier demarrage long, ~3 min)
+    - name: "SonarQube repond (premier demarrage long, telechargement de l image + 3 min)"
       ansible.builtin.uri:
         url: "http://127.0.0.1:9000/api/system/status"
         return_content: true
       register: sonar_up
       until: sonar_up.json is defined and sonar_up.json.status == "UP"
-      retries: 60
+      retries: 90
       delay: 10
+      # connexion lente : l'image (~800 Mo) peut mettre longtemps, Jenkins est utilisable sans attendre
+      ignore_errors: true
 
   handlers:
     - name: Restart jenkins
