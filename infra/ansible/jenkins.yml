@@ -246,14 +246,16 @@
       retries: 30
       delay: 5
 
-    - name: SonarQube repond (premier demarrage long, ~3 min)
+    - name: SonarQube repond (premier demarrage long : telechargement de l image + ~3 min)
       ansible.builtin.uri:
         url: "http://127.0.0.1:9000/api/system/status"
         return_content: true
       register: sonar_up
       until: sonar_up.json is defined and sonar_up.json.status == "UP"
-      retries: 60
+      retries: 90
       delay: 10
+      # connexion lente : l'image (~800 Mo) peut mettre longtemps, Jenkins est utilisable sans attendre
+      ignore_errors: true
 
   handlers:
     - name: Restart jenkins
