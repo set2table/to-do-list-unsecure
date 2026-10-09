@@ -62,10 +62,10 @@
         mode: "0644"
 
     - name: Depot apt Jenkins LTS
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
-        filename: jenkins
-        state: present
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/jenkins.list
+        content: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/\n"
+        mode: "0644"
 
     - name: Installation de Jenkins
       ansible.builtin.apt:
