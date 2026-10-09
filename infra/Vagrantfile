@@ -6,6 +6,8 @@ VMS = {
   "jenkins"   => { ip: "192.168.56.20", mem: 3584, cpus: 2 },
 }
 
+REPO = "https://github.com/set2table/to-do-list-unsecure.git"
+
 PUBKEY = File.read(File.join(__dir__, "id-rda-infra.key.pub")).strip
 
 Vagrant.configure("2") do |config|
@@ -33,6 +35,32 @@ Vagrant.configure("2") do |config|
         chmod 700 /home/admin/.ssh
         chmod 600 /home/admin/.ssh/authorized_keys
       SHELL
+
+      # Pas de WSL : la VM jenkins est son propre controleur Ansible.
+      # Elle clone le depot et applique jenkins.yml sur elle-meme (connexion locale).
+      # Relancer plus tard : vagrant ssh jenkins -c "sudo infra-jenkins <options>"
+      if name == "jenkins"
+        node.vm.provision "shell", inline: <<-SHELL
+          set -e
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -q
+          apt-get install -y -q ansible git
+          cat > /usr/local/bin/infra-jenkins <<'EOF'
+#!/bin/bash
+# Met a jour le depot puis applique jenkins.yml sur cette VM. Options passees a ansible-playbook.
+set -e
+if [ -d /opt/infra/.git ]; then
+  git -C /opt/infra fetch -q origin main && git -C /opt/infra reset -q --hard origin/main
+else
+  git clone -q #{REPO} /opt/infra
+fi
+cd /opt/infra/infra/ansible
+exec ansible-playbook jenkins.yml --limit jenkins -e ansible_connection=local "$@"
+EOF
+          chmod 755 /usr/local/bin/infra-jenkins
+          infra-jenkins --skip-tags moindre_privilege,durcissement -e ci_sonar=false -e ci_gate_bloquante=false
+        SHELL
+      end
     end
   end
 end
