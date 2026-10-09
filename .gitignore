@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+db.sqlite3
+.venv/
+venv/
+.coverage
+coverage.xml
+pip-audit.json
+requirements-ci.txt
+.scannerwork/
