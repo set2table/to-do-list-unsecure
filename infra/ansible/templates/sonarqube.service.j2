@@ -1,0 +1,25 @@
+# SonarQube Community en conteneur. Publie UNIQUEMENT sur l'IP host-only et
+# localhost : Docker contourne UFW, donc on ne publie pas sur 0.0.0.0.
+[Unit]
+Description=SonarQube (docker)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Restart=always
+ExecStartPre=-/usr/bin/docker rm -f sonarqube
+ExecStart=/usr/bin/docker run --rm --name sonarqube \
+  -p 127.0.0.1:9000:9000 -p {{ ansible_host }}:9000:9000 \
+  -e SONAR_SEARCH_JAVAOPTS="-Xms512m -Xmx512m" \
+  -e SONAR_WEB_JAVAOPTS="-Xmx512m" \
+  -e SONAR_CE_JAVAOPTS="-Xmx512m" \
+  -e SONAR_TELEMETRY_ENABLE=false \
+  -v sonarqube_data:/opt/sonarqube/data \
+  -v sonarqube_extensions:/opt/sonarqube/extensions \
+  -v sonarqube_logs:/opt/sonarqube/logs \
+  sonarqube:community
+ExecStop=/usr/bin/docker stop sonarqube
+
+[Install]
+WantedBy=multi-user.target

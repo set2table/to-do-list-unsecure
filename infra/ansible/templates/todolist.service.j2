@@ -1,0 +1,21 @@
+[Unit]
+Description=todolist (gunicorn)
+After=network.target
+
+[Service]
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_dir }}/app
+# secrets injectes par Ansible, hors du code et hors de git
+EnvironmentFile=/etc/todolist/todolist.env
+ExecStart={{ app_dir }}/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:80 todo.wsgi:application
+# pour pouvoir ecouter sur le port 80 sans etre root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

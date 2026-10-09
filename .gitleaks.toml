@@ -1,0 +1,14 @@
+# Config gitleaks du depot todolist : regles par defaut + faux positifs connus.
+# Chaque exception est justifiee ; on n'exclut jamais un fichier entier.
+title = "gitleaks todolist"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Faux positifs connus"
+regexes = [
+  # valeurs bidon utilisees par les tests unitaires (tasks/tests.py)
+  '''mot-de-passe-de-test''',
+  '''mauvais-mot-de-passe''',
+]

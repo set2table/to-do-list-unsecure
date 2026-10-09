@@ -1,0 +1,264 @@
+# VM jenkins : Jenkins + outils CI + SonarQube (conteneur) + durcissement J1.
+#   ansible-playbook jenkins.yml
+# Les jobs (jobs/*.xml.j2) sont versionnes ici et pousses par Ansible :
+# le depot git est la source de verite, pas l'interface web.
+
+- name: Serveur Jenkins
+  hosts: ci
+  become: true
+  vars:
+    jenkins_home: /var/lib/jenkins
+    jenkins_jobs:
+      - todolist-check-code
+      - todolist-deploy
+      - todolist-ci
+
+  tasks:
+    - name: Durcissement commun (J1)
+      ansible.builtin.include_tasks: durcissement.yml
+      args:
+        apply:
+          tags: durcissement
+      tags: durcissement
+
+    - name: Swap de 2 Go (8 Go de RAM sur l'hote, Jenkins + SonarQube c'est serre)
+      ansible.builtin.shell: |
+        set -e
+        fallocate -l 2G /swapfile
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      args:
+        creates: /swapfile
+
+    # --- Jenkins
+    - name: Java et outils de la CI
+      ansible.builtin.apt:
+        name:
+          - openjdk-21-jre-headless
+          - fontconfig
+          - git
+          - python3
+          - python3-venv
+          - python3-pip
+          - ansible
+          - curl
+          - unzip
+        state: present
+
+    - name: Cle du depot Jenkins (cle 2026)
+      ansible.builtin.get_url:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
+        dest: /usr/share/keyrings/jenkins-keyring.asc
+        mode: "0644"
+
+    - name: Depot apt Jenkins LTS
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+        filename: jenkins
+        state: present
+
+    - name: Installation de Jenkins
+      ansible.builtin.apt:
+        name: jenkins
+        state: present
+        update_cache: true
+
+    - name: Dossier override systemd
+      ansible.builtin.file:
+        path: /etc/systemd/system/jenkins.service.d
+        state: directory
+        mode: "0755"
+      tags: moindre_privilege
+
+    - name: Override systemd (memoire + sandbox)
+      ansible.builtin.copy:
+        src: files/jenkins-override.conf
+        dest: /etc/systemd/system/jenkins.service.d/override.conf
+        mode: "0644"
+      notify: Restart jenkins
+      tags: moindre_privilege
+
+    # --- Moindre privilege (exercice 6)
+    - name: "Utilisateur jenkins : pas de shell, mot de passe verrouille"
+      ansible.builtin.user:
+        name: jenkins
+        shell: /usr/sbin/nologin
+        password_lock: true
+      tags: moindre_privilege
+
+    - name: JENKINS_HOME lisible par jenkins uniquement
+      ansible.builtin.file:
+        path: "{{ jenkins_home }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: "0750"
+      tags: moindre_privilege
+
+    - name: Groupes de l'utilisateur jenkins
+      ansible.builtin.command: id -nG jenkins
+      register: jenkins_groups
+      changed_when: false
+      tags: moindre_privilege
+
+    - name: jenkins n'est ni sudoer ni dans docker (docker = root)
+      ansible.builtin.assert:
+        that:
+          - "'sudo' not in jenkins_groups.stdout.split()"
+          - "'docker' not in jenkins_groups.stdout.split()"
+        fail_msg: "jenkins a trop de droits : {{ jenkins_groups.stdout }}"
+      tags: moindre_privilege
+
+    - name: Aucune regle sudo pour jenkins
+      ansible.builtin.command: grep -rlw jenkins /etc/sudoers /etc/sudoers.d
+      register: sudo_jenkins
+      changed_when: false
+      failed_when: sudo_jenkins.rc == 0
+      tags: moindre_privilege
+
+    # --- Plugins (installes hors interface, versionnes dans files/plugins.txt)
+    - name: Dossier outils
+      ansible.builtin.file:
+        path: /opt/jenkins-tools
+        state: directory
+        mode: "0755"
+
+    - name: Plugin Installation Manager
+      ansible.builtin.get_url:
+        url: "https://github.com/jenkinsci/plugin-installation-manager-tool/releases/download/{{ plugin_manager_version }}/jenkins-plugin-manager-{{ plugin_manager_version }}.jar"
+        dest: /opt/jenkins-tools/jenkins-plugin-manager.jar
+        mode: "0644"
+
+    - name: Liste des plugins
+      ansible.builtin.copy:
+        src: files/plugins.txt
+        dest: /opt/jenkins-tools/plugins.txt
+        mode: "0644"
+      register: plugins_list
+
+    - name: Dossier plugins
+      ansible.builtin.file:
+        path: "{{ jenkins_home }}/plugins"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: "0750"
+
+    - name: Installation des plugins
+      ansible.builtin.command: >-
+        java -jar /opt/jenkins-tools/jenkins-plugin-manager.jar
+        --war /usr/share/java/jenkins.war
+        --plugin-download-directory {{ jenkins_home }}/plugins
+        --plugin-file /opt/jenkins-tools/plugins.txt
+      become_user: jenkins
+      when: plugins_list.changed
+      notify: Restart jenkins
+
+    # --- gitleaks (scan de secrets dans la CI)
+    - name: gitleaks
+      ansible.builtin.unarchive:
+        src: "https://github.com/gitleaks/gitleaks/releases/download/v{{ gitleaks_version }}/gitleaks_{{ gitleaks_version }}_linux_x64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: [gitleaks]
+        creates: /usr/local/bin/gitleaks
+
+    # --- Jobs (config.xml versionnes)
+    - name: Dossiers des jobs
+      ansible.builtin.file:
+        path: "{{ jenkins_home }}/jobs/{{ item }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: "0750"
+      loop: "{{ jenkins_jobs }}"
+
+    - name: config.xml des jobs
+      ansible.builtin.template:
+        src: "jobs/{{ item }}.xml.j2"
+        dest: "{{ jenkins_home }}/jobs/{{ item }}/config.xml"
+        owner: jenkins
+        group: jenkins
+        mode: "0640"
+      loop: "{{ jenkins_jobs }}"
+      notify: Restart jenkins
+      tags: jobs
+
+    - name: Jenkins demarre
+      ansible.builtin.systemd:
+        name: jenkins
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # --- SonarQube
+    - name: Docker
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+
+    - name: Prerequis noyau SonarQube (Elasticsearch)
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/90-sonarqube.conf
+        reload: true
+      loop:
+        - { name: vm.max_map_count, value: "524288" }
+        - { name: fs.file-max, value: "131072" }
+
+    - name: Service SonarQube
+      ansible.builtin.template:
+        src: templates/sonarqube.service.j2
+        dest: /etc/systemd/system/sonarqube.service
+        mode: "0644"
+      notify: Restart sonarqube
+
+    - name: SonarQube demarre
+      ansible.builtin.systemd:
+        name: sonarqube
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Restart des services si besoin
+      ansible.builtin.meta: flush_handlers
+
+    # --- verification
+    - name: Jenkins repond
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:8080/login"
+        status_code: [200, 403]
+      delegate_to: localhost
+      become: false
+      register: jenkins_up
+      until: jenkins_up.status in [200, 403]
+      retries: 30
+      delay: 5
+
+    - name: SonarQube repond (premier demarrage long, ~3 min)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/status"
+        return_content: true
+      register: sonar_up
+      until: sonar_up.json is defined and sonar_up.json.status == "UP"
+      retries: 60
+      delay: 10
+
+  handlers:
+    - name: Restart jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+        state: restarted
+        daemon_reload: true
+
+    - name: Restart sonarqube
+      ansible.builtin.systemd:
+        name: sonarqube
+        state: restarted
+        daemon_reload: true
+
+    - name: Common handlers
+      ansible.builtin.import_tasks: handlers.yml

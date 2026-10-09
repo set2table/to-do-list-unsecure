@@ -1,0 +1,231 @@
+# Deploiement de la todolist (voir README.md pour l'usage et la regle prod = main)
+#
+# Variables :
+#   app_version   branche, tag ou commit a deployer (defaut : main)
+#   deploy_par    qui a demande le deploiement (Jenkins passe l'utilisateur)
+#   deploy_build  URL du build Jenkins (tracabilite)
+# Secrets, lus dans l'environnement (jamais en argument, jamais dans git) :
+#   TODOLIST_SECRET_KEY, TODOLIST_ADMIN_PASSWORD
+
+- name: Deploiement de la todolist
+  hosts: apps
+  become: true
+  vars:
+    app_user: todolist
+    app_dir: /opt/todolist
+    app_version: main
+    deploy_par: "{{ lookup('env', 'USER') | default('inconnu', true) }}"
+    deploy_build: "manuel"
+    todolist_secret_key: "{{ lookup('env', 'TODOLIST_SECRET_KEY') }}"
+    todolist_admin_password: "{{ lookup('env', 'TODOLIST_ADMIN_PASSWORD') }}"
+
+  pre_tasks:
+    - name: Les secrets doivent etre fournis par l'environnement
+      ansible.builtin.assert:
+        that:
+          - todolist_secret_key | length >= 32
+          - todolist_admin_password | length >= 12
+        fail_msg: >-
+          TODOLIST_SECRET_KEY (>= 32 car.) et TODOLIST_ADMIN_PASSWORD (>= 12 car.)
+          doivent etre exportees avant de lancer le playbook.
+        quiet: true
+      no_log: true
+
+    # Regle : la prod ne recoit QUE le commit courant de main.
+    # Doublee dans le job Jenkins todolist-deploy (defense en profondeur).
+    - name: Commit actuel de main sur le depot
+      ansible.builtin.command: git ls-remote {{ app_repo }} refs/heads/main
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+      register: main_ref
+
+    - name: "Prod = main uniquement"
+      ansible.builtin.assert:
+        that:
+          - app_version in ['main', main_ref.stdout.split()[0]]
+        fail_msg: >-
+          REFUS : {{ inventory_hostname }} est un serveur de prod, seul main
+          ({{ main_ref.stdout.split()[0][:8] }}) peut y etre deploye.
+          Version demandee : {{ app_version }}
+      when: app_env == "prod"
+
+  tasks:
+    - name: Durcissement commun (J1)
+      ansible.builtin.include_tasks: durcissement.yml
+      args:
+        apply:
+          tags: durcissement
+      tags: durcissement
+
+    - name: Paquets de l'application
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-venv
+          - python3-pip
+          - git
+        state: present
+
+    # application
+    - name: Utilisateur todolist
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        system: true
+        shell: /usr/sbin/nologin
+        home: "{{ app_dir }}"
+
+    - name: Dossiers de l'application
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ app_dir }}", mode: "0755" }
+        - { path: "{{ app_dir }}/data", mode: "0750" }
+
+    - name: Recuperation des sources ({{ app_version }})
+      ansible.builtin.git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_dir }}/app"
+        version: "{{ app_version }}"
+        force: true
+      become_user: "{{ app_user }}"
+      register: sources
+      notify: Restart todolist
+
+    - name: requirements.txt genere depuis le Pipfile
+      ansible.builtin.shell: |
+        set -e
+        python3 - <<'EOF' > {{ app_dir }}/requirements.txt.new
+        import tomllib
+        pkgs = tomllib.load(open("{{ app_dir }}/app/Pipfile", "rb"))["packages"]
+        for name, spec in pkgs.items():
+            if isinstance(spec, dict):
+                spec = spec.get("version", "*")
+            print(name if spec in ("*", "") else name + spec)
+        EOF
+        if cmp -s {{ app_dir }}/requirements.txt.new {{ app_dir }}/requirements.txt; then
+          rm {{ app_dir }}/requirements.txt.new; echo unchanged
+        else
+          mv {{ app_dir }}/requirements.txt.new {{ app_dir }}/requirements.txt; echo changed
+        fi
+      args:
+        executable: /bin/bash
+      become_user: "{{ app_user }}"
+      register: reqs
+      changed_when: "'changed' in reqs.stdout"
+
+    - name: Dependances python (versions du Pipfile)
+      ansible.builtin.pip:
+        requirements: "{{ app_dir }}/requirements.txt"
+        virtualenv: "{{ app_dir }}/venv"
+        virtualenv_command: python3 -m venv
+      become_user: "{{ app_user }}"
+      notify: Restart todolist
+
+    - name: Gunicorn (si absent du Pipfile)
+      ansible.builtin.pip:
+        name: gunicorn
+        state: present
+        virtualenv: "{{ app_dir }}/venv"
+      become_user: "{{ app_user }}"
+
+    # Pour l'ancien code (DEBUG = True en dur). Le code corrige lit DJANGO_DEBUG.
+    - name: DEBUG = False en prod
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/app/todo/settings.py"
+        regexp: '^DEBUG ='
+        line: 'DEBUG = False'
+      become_user: "{{ app_user }}"
+      when: app_env == "prod"
+      notify: Restart todolist
+
+    - name: Dossier des secrets
+      ansible.builtin.file:
+        path: /etc/todolist
+        state: directory
+        owner: root
+        group: "{{ app_user }}"
+        mode: "0750"
+
+    - name: Variables d'environnement de l'appli (secrets)
+      ansible.builtin.template:
+        src: templates/todolist.env.j2
+        dest: /etc/todolist/todolist.env
+        owner: root
+        group: "{{ app_user }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart todolist
+
+    - name: Migrations
+      ansible.builtin.command:
+        cmd: "{{ app_dir }}/venv/bin/python manage.py migrate --noinput"
+        chdir: "{{ app_dir }}/app"
+      environment:
+        DJANGO_SECRET_KEY: "{{ todolist_secret_key }}"
+        DJANGO_DB_PATH: "{{ app_dir }}/data/db.sqlite3"
+      become_user: "{{ app_user }}"
+      register: migrate
+      changed_when: "'No migrations to apply' not in migrate.stdout"
+
+    - name: Service systemd todolist
+      ansible.builtin.template:
+        src: templates/todolist.service.j2
+        dest: /etc/systemd/system/todolist.service
+        mode: "0644"
+      notify: Restart todolist
+
+    - name: Demarrage de todolist au boot
+      ansible.builtin.systemd:
+        name: todolist
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # verification
+    - name: Restart des services si besoin
+      ansible.builtin.meta: flush_handlers
+
+    - name: Test de l'url
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}"
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      register: result
+      until: result.status == 200
+      retries: 5
+      delay: 3
+
+    # tracabilite : qui a deploye quoi, quand, depuis quel build
+    - name: Fiche de deploiement sur le serveur
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/DEPLOIEMENT"
+        content: |
+          version={{ sources.after }}
+          demande={{ app_version }}
+          par={{ deploy_par }}
+          build={{ deploy_build }}
+          date={{ now(utc=true).isoformat() }}
+        mode: "0644"
+
+    - name: Trace dans le journal systeme
+      ansible.builtin.command: >-
+        logger -t todolist-deploy
+        "env={{ app_env }} version={{ sources.after[:8] }} par={{ deploy_par }} build={{ deploy_build }}"
+      changed_when: true
+
+  handlers:
+    - name: Restart todolist
+      ansible.builtin.systemd:
+        name: todolist
+        state: restarted
+        daemon_reload: true
+
+    - name: Common handlers
+      ansible.builtin.import_tasks: handlers.yml

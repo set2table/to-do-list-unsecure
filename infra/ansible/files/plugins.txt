@@ -1,0 +1,12 @@
+git
+parameterized-trigger
+credentials-binding
+ssh-credentials
+plain-credentials
+role-strategy
+sonar
+build-name-setter
+build-user-vars-plugin
+token-macro
+timestamper
+ws-cleanup

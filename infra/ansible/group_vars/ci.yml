@@ -1,0 +1,15 @@
+# Jenkins et SonarQube ne sont joignables que depuis le reseau host-only
+ufw_regles:
+  - { port: "22" }
+  - { port: "8080", src: "192.168.56.0/24" }
+  - { port: "9000", src: "192.168.56.0/24" }
+
+# false pour les exercices 2 a 4 (on veut pouvoir deployer le code sale),
+# true a partir de l'exercice 13 (la gate bloque).
+ci_gate_bloquante: true
+
+gitleaks_version: "8.30.1"
+plugin_manager_version: "2.15.0"
+
+# false tant que SonarQube n'est pas branche (exercices 2 a 11), true a partir de l'exercice 12
+ci_sonar: true

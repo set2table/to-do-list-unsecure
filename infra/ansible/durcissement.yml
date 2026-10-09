@@ -1,0 +1,119 @@
+# Durcissement commun (J1) applique a toutes les VM : apps ET jenkins.
+# Inclus par deploy_app.yml et jenkins.yml. Les ports ouverts viennent de
+# la variable ufw_regles (group_vars/apps.yml, group_vars/ci.yml).
+
+# mises a jour
+- name: Miroir debian plus rapide
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list
+    regexp: 'httpredir\.debian\.org'
+    replace: 'deb.debian.org'
+  failed_when: false
+
+- name: apt update + upgrade
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    upgrade: dist
+
+- name: Paquets de base
+  ansible.builtin.apt:
+    name:
+      - acl
+      - ufw
+      - unattended-upgrades
+      - lynis
+      - auditd
+    state: present
+
+- name: Mises a jour de securite automatiques
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    mode: "0644"
+
+# ssh
+- name: Seule notre cle est autorisee
+  ansible.builtin.copy:
+    src: files/id-rda-infra.key.pub
+    dest: /home/admin/.ssh/authorized_keys
+    owner: admin
+    group: admin
+    mode: "0600"
+
+- name: Config sshd (cle uniquement)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/00-durcissement.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+- name: "Lynis SSH-7408 : options sshd"
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/01-lynis.conf
+    content: |
+      AllowTcpForwarding no
+      AllowAgentForwarding no
+      X11Forwarding no
+      ClientAliveCountMax 2
+      MaxAuthTries 3
+      MaxSessions 2
+      TCPKeepAlive no
+      LogLevel VERBOSE
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+# firewall
+- name: UFW regles entrantes
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: tcp
+    from_ip: "{{ item.src | default('any') }}"
+  loop: "{{ ufw_regles }}"
+
+- name: UFW sortant autorise
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: UFW entrant bloque + activation
+  community.general.ufw:
+    state: enabled
+    direction: incoming
+    policy: deny
+
+# noyau
+- name: "Lynis KRNL-6000 : parametres noyau"
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-lynis.conf
+    content: |
+      fs.protected_fifos = 2
+      fs.suid_dumpable = 0
+      kernel.dmesg_restrict = 1
+      kernel.kptr_restrict = 2
+      kernel.sysrq = 0
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv4.conf.all.log_martians = 1
+      net.ipv4.conf.default.accept_redirects = 0
+      net.ipv4.conf.default.accept_source_route = 0
+      net.ipv4.conf.default.log_martians = 1
+      net.ipv6.conf.all.accept_redirects = 0
+      net.ipv6.conf.default.accept_redirects = 0
+    mode: "0644"
+  notify: Reload sysctl
+
+- name: "Lynis ACCT-9628 : auditd demarre"
+  ansible.builtin.systemd:
+    name: auditd
+    enabled: true
+    state: started

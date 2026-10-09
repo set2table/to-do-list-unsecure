@@ -1,0 +1,141 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<!-- Gere par Ansible (infra/ansible/jobs) : toute modif dans l'UI sera ecrasee. -->
+<project>
+  <actions/>
+  <description>Chaine complete : todolist-check-code puis todolist-deploy sur la meme branche. Si le controle echoue, rien n'est deploye.</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <jenkins.model.BuildDiscarderProperty>
+      <strategy class="hudson.tasks.LogRotator">
+        <daysToKeep>365</daysToKeep>
+        <numToKeep>500</numToKeep>
+        <artifactDaysToKeep>-1</artifactDaysToKeep>
+        <artifactNumToKeep>-1</artifactNumToKeep>
+      </strategy>
+    </jenkins.model.BuildDiscarderProperty>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.StringParameterDefinition>
+          <name>BRANCHE</name>
+          <description>Branche git a traiter (ex : main, feature/xxx)</description>
+          <defaultValue>main</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>CIBLE</name>
+          <description>dev = app-dev (toute branche) / prod = app-prod1 (main uniquement)</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>dev</string>
+              <string>prod</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <scm class="hudson.scm.NullSCM"/>
+  <canRoam>true</canRoam>
+  <disabled>false</disabled>
+  <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
+  <blockBuildWhenUpstreamBuilding>false</blockBuildWhenUpstreamBuilding>
+  <triggers/>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+      <hudson.tasks.Shell>
+        <command>#!/bin/bash
+set -euo pipefail
+case "$BRANCHE" in
+  ""|*[!A-Za-z0-9._/-]*) echo "Nom de branche invalide : '$BRANCHE'"; exit 1 ;;
+esac
+if [ "$CIBLE" = "prod" ] &amp;&amp; [ "$BRANCHE" != "main" ]; then
+  echo "REFUS : la prod ne recoit que la branche main (branche demandee : $BRANCHE)."
+  exit 1
+fi
+echo "=== Chaine CI lancee par ${BUILD_USER_ID:-inconnu} : $BRANCHE -&gt; $CIBLE"
+echo "    1) todolist-check-code   2) todolist-deploy (seulement si 1 reussit)"
+</command>
+        <configuredLocalRules/>
+      </hudson.tasks.Shell>
+      <hudson.plugins.parameterizedtrigger.TriggerBuilder plugin="parameterized-trigger">
+        <configs>
+          <hudson.plugins.parameterizedtrigger.BlockableBuildTriggerConfig>
+            <configs>
+              <hudson.plugins.parameterizedtrigger.CurrentBuildParameters/>
+            </configs>
+            <projects>todolist-check-code</projects>
+            <condition>ALWAYS</condition>
+            <triggerWithNoParameters>false</triggerWithNoParameters>
+            <triggerFromChildProjects>false</triggerFromChildProjects>
+            <block>
+              <buildStepFailureThreshold>
+                <name>UNSTABLE</name>
+                <ordinal>1</ordinal>
+                <color>YELLOW</color>
+                <completeBuild>true</completeBuild>
+              </buildStepFailureThreshold>
+              <unstableThreshold>
+                <name>UNSTABLE</name>
+                <ordinal>1</ordinal>
+                <color>YELLOW</color>
+                <completeBuild>true</completeBuild>
+              </unstableThreshold>
+              <failureThreshold>
+                <name>FAILURE</name>
+                <ordinal>2</ordinal>
+                <color>RED</color>
+                <completeBuild>true</completeBuild>
+              </failureThreshold>
+            </block>
+            <buildAllNodesWithLabel>false</buildAllNodesWithLabel>
+          </hudson.plugins.parameterizedtrigger.BlockableBuildTriggerConfig>
+        </configs>
+      </hudson.plugins.parameterizedtrigger.TriggerBuilder>
+      <hudson.plugins.parameterizedtrigger.TriggerBuilder plugin="parameterized-trigger">
+        <configs>
+          <hudson.plugins.parameterizedtrigger.BlockableBuildTriggerConfig>
+            <configs>
+              <hudson.plugins.parameterizedtrigger.CurrentBuildParameters/>
+            </configs>
+            <projects>todolist-deploy</projects>
+            <condition>ALWAYS</condition>
+            <triggerWithNoParameters>false</triggerWithNoParameters>
+            <triggerFromChildProjects>false</triggerFromChildProjects>
+            <block>
+              <buildStepFailureThreshold>
+                <name>UNSTABLE</name>
+                <ordinal>1</ordinal>
+                <color>YELLOW</color>
+                <completeBuild>true</completeBuild>
+              </buildStepFailureThreshold>
+              <unstableThreshold>
+                <name>UNSTABLE</name>
+                <ordinal>1</ordinal>
+                <color>YELLOW</color>
+                <completeBuild>true</completeBuild>
+              </unstableThreshold>
+              <failureThreshold>
+                <name>FAILURE</name>
+                <ordinal>2</ordinal>
+                <color>RED</color>
+                <completeBuild>true</completeBuild>
+              </failureThreshold>
+            </block>
+            <buildAllNodesWithLabel>false</buildAllNodesWithLabel>
+          </hudson.plugins.parameterizedtrigger.BlockableBuildTriggerConfig>
+        </configs>
+      </hudson.plugins.parameterizedtrigger.TriggerBuilder>
+  </builders>
+  <publishers>
+  </publishers>
+  <buildWrappers>
+    <hudson.plugins.timestamper.TimestamperBuildWrapper plugin="timestamper"/>
+    <org.jenkinsci.plugins.builduser.BuildUser plugin="build-user-vars-plugin"/>
+    <org.jenkinsci.plugins.buildnamesetter.BuildNameSetter plugin="build-name-setter">
+      <template>#${BUILD_NUMBER} ${ENV,var="CIBLE"} ${ENV,var="BRANCHE"}</template>
+      <descriptionTemplate></descriptionTemplate>
+      <runAtStart>true</runAtStart>
+      <runAtEnd>true</runAtEnd>
+    </org.jenkinsci.plugins.buildnamesetter.BuildNameSetter>
+  </buildWrappers>
+</project>

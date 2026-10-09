@@ -1,0 +1,15 @@
+apps:
+  hosts:
+    app-dev:
+      ansible_host: 192.168.56.10
+    app-prod1:
+      ansible_host: 192.168.56.11
+
+ci:
+  hosts:
+    jenkins:
+      ansible_host: 192.168.56.20
+
+all:
+  vars:
+    ansible_user: admin

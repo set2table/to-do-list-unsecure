@@ -1,0 +1,3 @@
+ufw_regles:
+  - { port: "22" }
+  - { port: "80" }
