@@ -10,6 +10,32 @@
     replace: 'deb.debian.org'
   failed_when: false
 
+# Box Vagrant : grub-pc ne connait pas son disque d'installation et fait
+# echouer toute mise a jour non interactive. On lui dit de ne pas reinstaller
+# le chargeur (la VM boote deja), on repare dpkg, puis on bloque grub.
+- name: "grub-pc : pas de reinstallation interactive du chargeur"
+  ansible.builtin.debconf:
+    name: grub-pc
+    question: "{{ item.q }}"
+    vtype: "{{ item.t }}"
+    value: "{{ item.v }}"
+  loop:
+    - { q: grub-pc/install_devices_empty, t: boolean, v: "true" }
+    - { q: grub-pc/install_devices, t: multiselect, v: "" }
+
+- name: Reparation d'une mise a jour interrompue
+  ansible.builtin.command: dpkg --configure -a
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  changed_when: false
+
+- name: grub bloque (pas de mise a jour du chargeur sur les VM du TP)
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [grub-pc, grub-pc-bin, grub2-common, grub-common]
+  failed_when: false
+
 - name: apt update + upgrade
   ansible.builtin.apt:
     update_cache: true
