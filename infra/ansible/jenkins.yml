@@ -13,6 +13,13 @@
       - todolist-deploy
       - todolist-ci
 
+  pre_tasks:
+    - name: Miroir debian rapide (aussi quand le durcissement est saute)
+      ansible.builtin.shell: |
+        grep -rl 'httpredir.debian.org' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null \
+          | xargs -r sed -i 's#httpredir.debian.org#deb.debian.org#g'
+      changed_when: false
+
   tasks:
     - name: Durcissement commun (J1)
       ansible.builtin.include_tasks: durcissement.yml
