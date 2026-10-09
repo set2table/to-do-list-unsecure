@@ -53,6 +53,7 @@
           - curl
           - unzip
         state: present
+        update_cache: true
 
     - name: Cle du depot Jenkins (cle 2026)
       ansible.builtin.get_url:
