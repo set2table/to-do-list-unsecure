@@ -10,9 +10,10 @@ from django.shortcuts import render, redirect
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.utils.html import escape
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.http import require_http_methods, require_GET
 
-from .models import *
-from .forms import *
+from .models import Task
+from .forms import TaskForm
 
 # Mot de passe admin lu dans l'environnement (injecte par Ansible/Jenkins), jamais en dur.
 ADMIN_PASSWORD = os.environ.get("TODOLIST_ADMIN_PASSWORD", "")
@@ -46,6 +47,7 @@ def notify_new_task(title):
 
 
 # Create your views here.
+@require_http_methods(["GET", "POST"])
 def index(request):
     tasks = Task.objects.all()
 
@@ -69,6 +71,7 @@ def index(request):
     return render(request, "tasks/list.html", context)
 
 
+@require_http_methods(["GET", "POST"])
 def updateTask(request, pk):
     try:
         task = Task.objects.get(id=pk)
@@ -87,6 +90,7 @@ def updateTask(request, pk):
     return render(request, "tasks/update_task.html", context)
 
 
+@require_http_methods(["GET", "POST"])
 def deleteTask(request, pk):
     # Protection CSRF de Django active (plus de @csrf_exempt).
     try:
@@ -109,6 +113,7 @@ def deleteTask(request, pk):
     return render(request, "tasks/delete.html", context)
 
 
+@require_GET
 def search_tasks(request):
     query = request.GET.get("q", "")
     # ORM parametre : plus de SQL concatene, injection SQL impossible.
@@ -118,6 +123,7 @@ def search_tasks(request):
     return HttpResponse("<ul>" + results + "</ul>")
 
 
+@require_http_methods(["GET", "POST"])
 def import_tasks(request):
     # Protection CSRF active + format de donnees non executable (JSON).
     if request.method == "POST":
@@ -138,6 +144,7 @@ def import_tasks(request):
     )
 
 
+@require_GET
 def admin_panel(request):
     password = request.GET.get("pwd", "")
     # Comparaison a temps constant, secret lu dans l'environnement.
