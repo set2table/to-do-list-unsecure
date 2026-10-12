@@ -10,26 +10,29 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/3.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def env_bool(name, default=False):
+    return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-# TODO: ne jamais commiter la cle secrete, la charger depuis une variable d'environnement
-# FIXME: cle secrete Django exposee dans le depot Git
-SECRET_KEY = 'django-insecure-=8e&h2naz6*na6mne4y8l1m@rr=(igde^7rz2cmal)r_o)raoo'
+# Cle secrete lue dans l'environnement (injectee par Ansible/Jenkins Credentials Store).
+# Plus aucune valeur en dur dans le code ni dans git.
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 
-# SECURITY WARNING: don't run with debug turned on in production!
-# TODO: desactiver le mode DEBUG avant la mise en production
-DEBUG = True
+# DEBUG piloté par l'environnement : true en dev, false partout ailleurs (defaut sûr : false).
+DEBUG = env_bool("DJANGO_DEBUG", False)
 
-# TODO: restreindre les hotes autorises, '*' accepte n'importe quel hote
-ALLOWED_HOSTS = ['*']
+# Hotes autorises fournis par l'environnement (liste separee par des virgules).
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
 
 
 # Application definition
@@ -51,9 +54,15 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
-    # TODO: XFrameOptionsMiddleware retire => clickjacking possible (S5146)
-    # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Protection anti-clickjacking reactivee (en-tete X-Frame-Options: DENY).
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # En-tetes de securite complementaires (CSP, Referrer-Policy).
+    'tasks.middleware.SecurityHeadersMiddleware',
 ]
+
+X_FRAME_OPTIONS = "DENY"
+# nosniff : empeche le navigateur de deviner le type MIME.
+SECURE_CONTENT_TYPE_NOSNIFF = True
 
 ROOT_URLCONF = 'todo.urls'
 
@@ -82,7 +91,8 @@ WSGI_APPLICATION = 'todo.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        # Chemin de la base fourni par l'environnement (hors de l'arborescence du code).
+        'NAME': os.environ.get("DJANGO_DB_PATH", str(BASE_DIR / 'db.sqlite3')),
     }
 }
 
@@ -125,11 +135,13 @@ USE_TZ = True
 
 
 
-# TODO: activer le flag Secure sur les cookies (transport HTTPS uniquement)
-SESSION_COOKIE_SECURE = False
-CSRF_COOKIE_SECURE = False
-# TODO: HttpOnly=False expose le cookie de session au JavaScript (vol de session via XSS)
-SESSION_COOKIE_HTTPONLY = False
+# Cookies Secure uniquement en HTTPS (pilote par l'environnement).
+_HTTPS = env_bool("DJANGO_HTTPS", False)
+SESSION_COOKIE_SECURE = _HTTPS
+CSRF_COOKIE_SECURE = _HTTPS
+# Cookie de session inaccessible au JavaScript : ferme le vol de session via XSS.
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False  # le template a besoin de lire le token CSRF
 
 STATIC_URL = '/static/'
 

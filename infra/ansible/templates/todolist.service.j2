@@ -11,10 +11,25 @@ EnvironmentFile=/etc/todolist/todolist.env
 ExecStart={{ app_dir }}/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:80 todo.wsgi:application
 # pour pouvoir ecouter sur le port 80 sans etre root
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# --- Durcissement : reduire le rayon d'explosion si l'appli est compromise ---
+# Aucun gain de privilege possible (ni setuid, ni capabilities supplementaires).
 NoNewPrivileges=true
+# Repertoire /tmp prive et ephemere, isole des autres services.
 PrivateTmp=true
-ProtectSystem=full
+# Tout le systeme de fichiers en lecture seule...
+ProtectSystem=strict
+# ...sauf le seul dossier ou l'appli a besoin d'ecrire (la base SQLite).
+ReadWritePaths={{ app_dir }}/data
+# Les /home ne sont meme pas visibles par le service.
 ProtectHome=true
+# Durcissements complementaires (noyau, cgroups, familles de sockets).
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
 Restart=always
 
 [Install]

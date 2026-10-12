@@ -1,0 +1,102 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<!-- Gere par Ansible (infra/ansible/jobs) : toute modif dans l'UI sera ecrasee. -->
+<project>
+  <actions/>
+  <description>Scan DAST OWASP ZAP (baseline) contre app-dev apres deploiement. Ne cible JAMAIS la prod. Le build echoue si une alerte de risque High est trouvee ; le rapport HTML est archive.</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <jenkins.model.BuildDiscarderProperty>
+      <strategy class="hudson.tasks.LogRotator">
+        <daysToKeep>365</daysToKeep>
+        <numToKeep>500</numToKeep>
+        <artifactDaysToKeep>-1</artifactDaysToKeep>
+        <artifactNumToKeep>-1</artifactNumToKeep>
+      </strategy>
+    </jenkins.model.BuildDiscarderProperty>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.StringParameterDefinition>
+          <name>BRANCHE</name>
+          <defaultValue>main</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>CIBLE</name>
+          <description>Le scan ne s'execute QUE pour dev. prod est ignore volontairement.</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>dev</string>
+              <string>prod</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <scm class="hudson.scm.NullSCM"/>
+  <canRoam>true</canRoam>
+  <disabled>false</disabled>
+  <triggers/>
+  <concurrentBuild>false</concurrentBuild>
+  <builders>
+    <hudson.tasks.Shell>
+      <command>#!/bin/bash
+set -euo pipefail
+
+# --- Garde-fou : on ne scanne JAMAIS la production -------------------------
+if [ "$CIBLE" != "dev" ]; then
+  echo "Scan ZAP ignore pour la cible '$CIBLE' : on n'attaque jamais la prod."
+  exit 0
+fi
+
+CIBLE_URL="http://{{ hostvars['app-dev'].ansible_host }}"
+echo "=== Scan ZAP baseline contre $CIBLE_URL ==="
+
+# Rapport ecrit dans le workspace ; conteneur lance avec l'uid Jenkins
+# pour que les fichiers restent lisibles par l'archiveur.
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/zap/wrk:rw \
+  ghcr.io/zaproxy/zaproxy:stable \
+  zap-baseline.py -t "$CIBLE_URL" -r zap_report.html -J zap_report.json -I || true
+
+if [ ! -f zap_report.json ]; then
+  echo "ERREUR : ZAP n'a produit aucun rapport."
+  exit 1
+fi
+
+# --- Seuil : on bloque des qu'une alerte de risque Medium ou High apparait -
+# Justification : High = directement exploitable, Medium = defaut de securite
+# avere (en-tetes manquants, divulgation d'info). Aucun des deux ne doit
+# franchir la recette vers la prod. Low/Informational restent des avertissements
+# non bloquants (archives dans le rapport mais sans faire echouer le build).
+python3 - &lt;&lt;'PY'
+import json, sys
+data = json.load(open("zap_report.json"))
+counts = {"3": 0, "2": 0, "1": 0, "0": 0}
+for site in data.get("site", []):
+    for a in site.get("alerts", []):
+        counts[a.get("riskcode", "0")] = counts.get(a.get("riskcode", "0"), 0) + 1
+high, med, low, info = counts["3"], counts["2"], counts["1"], counts["0"]
+print(f"Alertes ZAP -> High={high} Medium={med} Low={low} Info={info}")
+if high + med &gt;= 1:
+    print(f"ECHEC : {high} High + {med} Medium (seuil = 0). Build rejete.")
+    sys.exit(1)
+print("Seuil respecte (aucune alerte High ni Medium). Build accepte.")
+PY
+</command>
+      <configuredLocalRules/>
+    </hudson.tasks.Shell>
+  </builders>
+  <publishers>
+    <hudson.tasks.ArtifactArchiver>
+      <artifacts>zap_report.html,zap_report.json</artifacts>
+      <allowEmptyArchive>true</allowEmptyArchive>
+      <onlyIfSuccessful>false</onlyIfSuccessful>
+      <fingerprint>false</fingerprint>
+      <defaultExcludes>true</defaultExcludes>
+      <caseSensitive>true</caseSensitive>
+    </hudson.tasks.ArtifactArchiver>
+  </publishers>
+  <buildWrappers>
+    <hudson.plugins.timestamper.TimestamperBuildWrapper plugin="timestamper"/>
+  </buildWrappers>
+</project>

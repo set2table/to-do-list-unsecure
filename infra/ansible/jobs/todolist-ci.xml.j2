@@ -125,6 +125,34 @@ echo "    1) todolist-check-code   2) todolist-deploy (seulement si 1 reussit)"
           </hudson.plugins.parameterizedtrigger.BlockableBuildTriggerConfig>
         </configs>
       </hudson.plugins.parameterizedtrigger.TriggerBuilder>
+      <hudson.plugins.parameterizedtrigger.TriggerBuilder plugin="parameterized-trigger">
+        <configs>
+          <hudson.plugins.parameterizedtrigger.BlockableBuildTriggerConfig>
+            <configs>
+              <hudson.plugins.parameterizedtrigger.CurrentBuildParameters/>
+            </configs>
+            <projects>todolist-zap</projects>
+            <condition>ALWAYS</condition>
+            <triggerWithNoParameters>false</triggerWithNoParameters>
+            <triggerFromChildProjects>false</triggerFromChildProjects>
+            <block>
+              <buildStepFailureThreshold>
+                <name>FAILURE</name>
+                <ordinal>2</ordinal>
+                <color>RED</color>
+                <completeBuild>true</completeBuild>
+              </buildStepFailureThreshold>
+              <failureThreshold>
+                <name>FAILURE</name>
+                <ordinal>2</ordinal>
+                <color>RED</color>
+                <completeBuild>true</completeBuild>
+              </failureThreshold>
+            </block>
+            <buildAllNodesWithLabel>false</buildAllNodesWithLabel>
+          </hudson.plugins.parameterizedtrigger.BlockableBuildTriggerConfig>
+        </configs>
+      </hudson.plugins.parameterizedtrigger.TriggerBuilder>
   </builders>
   <publishers>
   </publishers>
