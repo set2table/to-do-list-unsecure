@@ -1,3 +1,5 @@
+from unittest import mock
+
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -169,11 +171,10 @@ class AdminPanelTest(TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_bon_mot_de_passe_ne_divulgue_pas_la_cle(self):
-        import os
-        os.environ["TODOLIST_ADMIN_PASSWORD"] = "secretdetest"
-        # recharge la valeur lue au niveau module
-        views.ADMIN_PASSWORD = "secretdetest"
-        response = self.client.get("/admin_panel/", {"pwd": "secretdetest"})
+        # valeur de test neutre (presente dans l'allowlist gitleaks du depot)
+        secret = "mot-de-passe-de-test"
+        with mock.patch.object(views, "ADMIN_PASSWORD", secret):
+            response = self.client.get("/admin_panel/", {"pwd": secret})
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "SECRET_KEY")
 
